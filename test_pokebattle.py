@@ -177,4 +177,50 @@ for _ in range(20):
     assert abs(exact - decomp) < 1e-9, (exact, decomp)
 print("[11] 무작위 순서에서 E[승점] = 개별 점수의 합 OK — 20케이스, 순열 120개 전수 대조")
 
+# 12) --dup (중복 허용): 슬롯이 완전히 독립이라 시리즈 착취력이 0이 되는가.
+#     라운드마다 승>=패 이고 슬롯이 독립이면, 합의 부호도 그 성질을 물려받는다.
+pv = [0.0] * n
+for c, w_ in P.NASH:
+    pv[IDX[c]] = w_ / P.NASH_DEN
+WW = [sum(pv[i] for i in range(n) if P.duel(combos[i], y) == 1.0) for y in combos]
+DD = [sum(pv[i] for i in range(n) if P.duel(combos[i], y) == 0.5) for y in combos]
+LL = [sum(pv[i] for i in range(n) if P.duel(combos[i], y) == 0.0) for y in combos]
+assert all(WW[j] >= LL[j] - 1e-12 for j in range(n)), "라운드 수준부터 깨짐"
+
+
+def dup_edge(y):
+    """상대 엔트리 y 의 시리즈 우위. 내 5슬롯이 i.i.d. 이므로 정확히 컨볼루션."""
+    d = [0.0] * 11
+    d[5] = 1.0
+    for j in y:
+        nd = [0.0] * 11
+        for s_, pr in enumerate(d):
+            if pr:
+                nd[min(s_ + 1, 10)] += pr * WW[j]
+                nd[s_] += pr * DD[j]
+                nd[max(s_ - 1, 0)] += pr * LL[j]
+        d = nd
+    return sum(d[:5]) - sum(d[6:])
+
+
+cands = [[i] * 5 for i in range(n)]                       # 순수 엔트리 전수
+for i, j in itertools.combinations(range(n), 2):          # 2종 혼합 전수
+    for a in range(1, 5):
+        cands.append([i] * a + [j] * (5 - a))
+rng = random.Random(9)
+for _ in range(20000):                                    # 3종 이상 무작위 표본
+    cands.append([rng.randrange(n) for _ in range(5)])
+worst_dup = max(dup_edge(y) for y in cands)
+print(f"[12] --dup 시리즈 착취력 {worst_dup:+.2e} — 상대 후보 {len(cands):,}개 "
+      f"(순수/2종 전수 + 무작위 2만)")
+assert worst_dup < 1e-9, worst_dup
+
+# 13) --dup 에서는 슬롯끼리 독립이라 각 슬롯이 무조건 최선 카운터를 받는다
+for m in P.MONS:
+    got = P.counter_slots([0], [m], set(), dup=True)[0]
+    assert P.duel(got[2], m[2]) == max(P.duel(c, m[2]) for c in combos), m[1]
+team = P.pick([P.BY_NAME["리자몽"]] * 5, random.Random(0), dup=True)
+assert len({x[0] for x in team}) == 1, team          # 5슬롯 모두 같은 최선 카운터
+print(f"[13] --dup 카운터 배정 OK — 151마리 전부 슬롯별 최선, 동일 상대 5슬롯은 같은 픽")
+
 print("\n전부 통과")

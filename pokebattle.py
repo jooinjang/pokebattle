@@ -13,6 +13,7 @@
     pokebattle.py 6 ? 25 ? ?                   # 도감번호도 가능
     pokebattle.py --rank                       # 151마리를 타입 상성 강도순으로 나열
     pokebattle.py --maxev                      # 상대 151마리 균등 가정의 최대기대값 엔트리
+    pokebattle.py --dup                        # 같은 포켓몬 중복 허용 규칙
     pokebattle.py --seed 7                     # 추출 고정
     pokebattle.py --selftest
 """
@@ -317,6 +318,23 @@ def nash_multiset_dist(k, caps):
 FACT = [1, 1, 2, 6, 24, 120]
 
 
+def sample_nash_dup(k, rng):
+    """중복 허용판. 슬롯마다 그냥 독립으로 뽑으면 된다.
+
+    정원 제약이 사라지므로 각 슬롯이 정확히 균형 분포를 따르고, 슬롯끼리
+    독립이다. 이러면 라운드마다 승 확률 >= 패 확률이 보장되고, 독립인
+    확률변수의 합은 자기 부호반전을 확률적으로 지배하므로 다수결에서도
+    P(시리즈 승) >= P(시리즈 패)가 따라온다.
+
+    중복 금지판(nash_multiset_dist)이 남기는 시리즈 착취력 +0.039가
+    여기서는 정확히 0이 된다. 상대 엔트리 749,398개 전수 확인 — test [12].
+    """
+    combos = [c for c, _ in NASH]
+    weights = [w for _, w in NASH]
+    return [rng.choice(COMBO_MONS[c])
+            for c in rng.choices(combos, weights=weights, k=k)]
+
+
 def sample_nash(k, rng, used=()):
     """미지 슬롯 k개에 균형 표본을 배정한다. 슬롯 순서는 균등 무작위."""
     used = set(used)
@@ -354,12 +372,18 @@ def resolve(token):
     raise SystemExit(f"모르는 포켓몬: {token!r} (1세대 한국어 이름 또는 1~151 도감번호)")
 
 
-def counter_slots(slots, opponents, used):
-    """상대를 아는 슬롯들에 중복 없이 최선의 카운터를 배정한다.
+def counter_slots(slots, opponents, used, dup=False):
+    """상대를 아는 슬롯들에 최선의 카운터를 배정한다.
 
-    슬롯이 5개 이하라 슬롯당 상위 5후보만 남겨도 최적 배정이 그 안에 존재한다.
+    중복 허용이면 슬롯끼리 독립이라 각자 최선을 고르면 끝난다.
+    중복 금지면 배정 문제가 되는데, 슬롯이 5개 이하라 슬롯당 상위 5후보만
+    남겨도 최적 배정이 그 안에 존재한다.
     (좌측 정점 k개인 최대 가중 이분 매칭은 각 정점의 상위 k개만 봐도 충분)
     """
+    if dup:
+        return [max(MONS, key=lambda m: (duel(m[2], opponents[i][2]), -m[0]))
+                for i in slots]
+
     scored = []
     for i in slots:
         row = [(duel(m[2], opponents[i][2]), m) for m in MONS if m[0] not in used]
@@ -376,8 +400,8 @@ def counter_slots(slots, opponents, used):
     return [m for _, m in best[1]]
 
 
-def pick(opponents, rng=None):
-    """슬롯별 상대(None=미지)를 받아 중복 없는 5마리를 고른다.
+def pick(opponents, rng=None, dup=False):
+    """슬롯별 상대(None=미지)를 받아 5마리를 고른다. dup이면 같은 포켓몬 중복 허용.
 
     아는 슬롯은 확정 카운터로 착취하고, 모르는 슬롯은 균형에서 뽑는다.
     모르는 슬롯에 '랜덤 상대 대비 최강'을 넣으면 상대도 동시에 최적화하는
@@ -389,10 +413,12 @@ def pick(opponents, rng=None):
 
     team = [None] * len(opponents)
     if unknown:
-        for i, m in zip(unknown, sample_nash(len(unknown), rng)):
+        draw = (sample_nash_dup(len(unknown), rng) if dup
+                else sample_nash(len(unknown), rng))
+        for i, m in zip(unknown, draw):
             team[i] = m
     used = {m[0] for m in team if m}
-    for i, m in zip(known, counter_slots(known, opponents, used) if known else []):
+    for i, m in zip(known, counter_slots(known, opponents, used, dup) if known else []):
         team[i] = m
     return team
 
@@ -447,7 +473,7 @@ def print_ranking():
     return 0
 
 
-def print_maxev():
+def print_maxev(dup=False):
     """상대를 151마리 균등으로 가정했을 때 기대값이 최대인 엔트리.
 
     양쪽 다 순서를 모르면 대진이 무작위 전단사가 되어 E[승점]에 교차항이 없다
@@ -463,7 +489,8 @@ def print_maxev():
     # 후자(15패)를 넣는 쪽이 시리즈 승률 84.45% -> 84.67%.
     for c in sorted(COMBOS, key=lambda c: (-score[c], loss[c]))[:10]:
         mark = ""
-        for m in COMBO_MONS[c]:
+        pool = COMBO_MONS[c] * SLOTS if dup else COMBO_MONS[c]
+        for m in pool:
             if len(team) < SLOTS:
                 team.append(m)
                 mark = " <-"
@@ -473,8 +500,22 @@ def print_maxev():
     print(f"최대기대값 엔트리: {', '.join(fmt(m) for m in team)}")
     print(f"  판당 기대점수 {sum(score[key(m[2])] for m in team) / SLOTS:.4f}")
     print()
+    if dup:
+        print("(--dup: 같은 포켓몬 중복 허용. 최고 조합을 정원 없이 채웁니다)")
+
+    # 최악의 카운터는 하드코딩하지 말고 매번 계산한다. 규칙이나 상성표가
+    # 바뀌면 답도 바뀌는데, 문구만 남아 거짓말이 되기 쉽다.
+    worst, wl = None, None
+    for c in COMBOS:
+        if not dup and len(COMBO_MONS[c]) < SLOTS:
+            continue  # 중복 금지면 5마리를 채울 수 없는 조합은 애초에 짤 수 없다
+        w = sum(1 for m in team if duel(c, key(m[2])) == 1.0)
+        l = sum(1 for m in team if duel(c, key(m[2])) == 0.0)
+        if worst is None or (w - l) > wl[0] - wl[1]:
+            worst, wl = c, (w, l)
     print("주의: 이 엔트리는 상대가 적응하지 않는다는 가정에서만 최적입니다.")
-    print("      상대가 땅/바위 5마리(꼬마돌 계열)로 맞추면 2승 3패로 100% 집니다 (순서 무관).")
+    print(f"      상대가 {'/'.join(worst)} 5마리({', '.join(m[1] for m in COMBO_MONS[worst][:2])} 등)로"
+          f" 맞추면 {wl[1]}승 {wl[0]}패로 집니다 (순서 무관).")
     print("      상대도 최적화한다면 인자 없이 실행해 균형 추출을 쓰세요.")
     return 0
 
@@ -492,8 +533,10 @@ def print_nash():
 def main(argv):
     if "--selftest" in argv:
         return selftest()
+    dup = "--dup" in argv
+    argv = [a for a in argv if a != "--dup"]
     if "--maxev" in argv:
-        return print_maxev()
+        return print_maxev(dup)
     if "--rank" in argv:
         return print_ranking()
     seed = None
@@ -507,10 +550,13 @@ def main(argv):
     if len(tokens) != SLOTS:
         raise SystemExit(f"슬롯 {SLOTS}개를 지정하세요. 모르는 슬롯은 ? 로. (받은 개수: {len(tokens)})")
     opponents = [resolve(t) for t in tokens]
-    team = pick(opponents, rng)
+    team = pick(opponents, rng, dup)
 
     if any(o is None for o in opponents):
         print_nash()
+        if dup:
+            print("--dup: 슬롯마다 위 분포에서 독립 추출합니다. 시리즈 착취력 정확히 0.")
+            print()
 
     print(f"{pad('슬롯', 5)}{pad('상대', 24)}{pad('추천', 24)}{'내 배율':>8}{'상대 배율':>10}  판정")
     print("-" * 74)
