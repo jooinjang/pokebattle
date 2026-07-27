@@ -1,16 +1,27 @@
 # pokebattle
 
+[![Python](https://img.shields.io/badge/python-3.8%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![dependencies](https://img.shields.io/badge/dependencies-none-success)](#)
+[![exploitability](https://img.shields.io/badge/round--level%20exploitability-exactly%200-brightgreen)](#63-모르는-슬롯--내쉬-균형)
+[![last commit](https://img.shields.io/github/last-commit/jooinjang/pokebattle)](https://github.com/jooinjang/pokebattle/commits/main)
+[![code size](https://img.shields.io/github/languages/code-size/jooinjang/pokebattle)](https://github.com/jooinjang/pokebattle)
+
+**https://github.com/jooinjang/pokebattle**
+
 1세대 포켓몬 151마리 중에서, **타입 상성만으로** 5마리 엔트리를 골라주는 CLI입니다.
 개체값·종족값·기술·특성은 일절 쓰지 않습니다. 타입 조합이 전부입니다.
+
+```bash
+git clone https://github.com/jooinjang/pokebattle.git
+cd pokebattle
+
+python3 pokebattle.py            # 상대를 모를 때 (기본)
+python3 test_pokebattle.py       # 검증 (약 6초)
+```
 
 - 의존성 없음 (Python 표준 라이브러리만). Python 3.8+
 - 파일 2개: `pokebattle.py`, `test_pokebattle.py`
 - 데이터(151마리 타입 + 18타입 상성표)는 PokeAPI에서 생성해 파일에 직접 넣어뒀습니다. 네트워크 접속 없음
-
-```bash
-python3 pokebattle.py            # 상대를 모를 때 (기본)
-python3 test_pokebattle.py       # 검증 (약 6초)
-```
 
 ---
 
