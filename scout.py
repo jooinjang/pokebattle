@@ -19,11 +19,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pokebattle import (BY_NAME, COMBO_MONS, COMBOS, MONS, NASH, NASH_DEN,
                         SLOTS, best_mult, duel, key, pad)
 
-DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "matches.json")
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def datafile():
+    """본인 기록(matches.json)이 있으면 그걸, 없으면 익명 샘플을 읽는다."""
+    mine = os.path.join(HERE, "matches.json")
+    return mine if os.path.exists(mine) else os.path.join(HERE, "match-samples.json")
 
 
 def load():
-    d = json.load(open(DATA, encoding="utf-8"))
+    path = datafile()
+    d = json.load(open(path, encoding="utf-8"))
+    if os.path.basename(path) != "matches.json":
+        print(f"({os.path.basename(path)} 를 읽었습니다. 본인 기록은 matches.json 으로 만드세요)\n")
     return d["us"], d["matches"]
 
 

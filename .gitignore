@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+
+# 실제 대전 기록 — 팀명 등 내부 정보가 들어갈 수 있어 추적하지 않는다.
+# 공개용 예시는 match-samples.json 을 쓴다.
+matches.json
