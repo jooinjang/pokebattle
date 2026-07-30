@@ -9,7 +9,12 @@ pokebattle.py 는 상대를 모를 때의 균형 전략을 다룬다. 이쪽은 
     scout.py 운영1유닛 --hide 강철/전기
                                  # 우리 주력 조합을 지정하면 그걸 노리는
                                  # 저격 픽이 어느 슬롯에서 오는지 집계한다
+    scout.py 개발16유닛 --arrange 썬더 코일 썬더 고지 갸라도스
+                                 # 5마리를 그 상대의 슬롯 습관에 맞춰 배치한다.
+                                 # pokebattle.py --dup 이 뽑은 멀티셋을 그대로
+                                 # 넣으면 균형 구성 + 정보 기반 배치가 된다.
 """
+import itertools
 import json
 import os
 import sys
@@ -17,7 +22,7 @@ from collections import Counter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pokebattle import (BY_NAME, COMBO_MONS, COMBOS, MONS, NASH, NASH_DEN,
-                        SLOTS, best_mult, duel, key, pad)
+                        SLOTS, best_mult, duel, key, pad, resolve)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -75,6 +80,70 @@ def record(matches, team):
     return w, d, l
 
 
+def slot_dist(E, alpha=0.5):
+    """슬롯별로 상대가 놓은 타입 조합의 경험분포. alpha 는 라플라스 평활.
+
+    표본이 얇으므로(팀당 2~5경기) 관측 안 된 조합에도 최소 확률을 준다.
+    평활이 없으면 한 번도 안 나온 픽에 0을 줘서 배치가 과적합된다.
+    """
+    out = []
+    for s in range(SLOTS):
+        seen = Counter(key(BY_NAME[e[s]][2]) for e in E)
+        tot = len(E) + alpha * len(COMBOS)
+        out.append({c: (seen[c] + alpha) / tot for c in COMBOS})
+    return out
+
+
+def arrange(team, E):
+    """team(포켓몬 5마리)을 슬롯별 기대 마진 합이 최대가 되도록 배치한다.
+
+    5! = 120 가지뿐이라 완전탐색. 반환 (최적 순열, 기대마진, 균등배치 기대마진).
+    균등배치 값은 비교용 — 이만큼이 슬롯 습관에 베팅해서 얻는 이득이다.
+    """
+    dist = slot_dist(E)
+
+    def margin(mon, s):
+        c = key(mon[2])
+        return sum((1 if duel(c, o) == 1.0 else -1 if duel(c, o) == 0.0 else 0) * p
+                   for o, p in dist[s].items())
+
+    best = None
+    total = 0.0
+    for pm in itertools.permutations(range(SLOTS)):
+        v = sum(margin(team[i], s) for s, i in enumerate(pm))
+        total += v
+        if best is None or v > best[0]:
+            best = (v, pm)
+    return best[1], best[0], total / 120
+
+
+def print_arrange(team, E, foe):
+    order, ev, base = arrange(team, E)
+    dist = slot_dist(E)
+    print(f"{foe} 슬롯 습관에 맞춘 배치 (관측 {len(E)}경기)")
+    print()
+    print(f"{pad('슬롯', 5)}{pad('배치', 22)}{pad('그 슬롯의 상대 예상 (상위 3)', 44)}{'기대마진':>9}")
+    print("-" * 82)
+    for s, i in enumerate(order):
+        mon = team[i]
+        c = key(mon[2])
+        top = sorted(dist[s].items(), key=lambda kv: -kv[1])[:3]
+        m = sum((1 if duel(c, o) == 1.0 else -1 if duel(c, o) == 0.0 else 0) * p
+                for o, p in dist[s].items())
+        exp = ", ".join(f"{'/'.join(o)} {p:.0%}" for o, p in top)
+        print(f"{pad(str(s+1), 5)}{pad(mon[1] + '(' + '/'.join(mon[2]) + ')', 22)}"
+              f"{pad(exp, 44)}{m:>+9.2f}")
+    print("-" * 82)
+    print(f"엔트리: {', '.join(team[i][1] for i in order)}")
+    print(f"  기대 마진 {ev:+.2f}판  (균등 무작위 배치는 {base:+.2f}판 — 배치로 얻는 이득 {ev-base:+.2f})")
+    if abs(ev - base) < 0.15:
+        print("  * 이득이 미미합니다. 이 멀티셋은 배치에 둔감하니 순서를 신경 쓸 필요가 없습니다.")
+    print()
+    print("주의: 배치를 이렇게 맞추는 순간 균형의 착취 불가능성은 깨집니다.")
+    print(f"      {foe} 가 슬롯 습관을 바꾸면 이 이득이 그대로 손실이 됩니다.")
+    return 0
+
+
 def main(argv):
     us, matches = load()
     bad = verify(matches)
@@ -94,14 +163,27 @@ def main(argv):
         w, d, l = record(matches, t)
         print(f"  {pad(t, 12)} {w}승 {d}무 {l}패" + ("   <- 우리" if t == us else ""))
 
-    args = [a for a in argv if not a.startswith("--")]
     hide = None
     if "--hide" in argv:
-        hide = tuple(sorted(argv[argv.index("--hide") + 1].split("/")))
+        i = argv.index("--hide")
+        hide = tuple(sorted(argv[i + 1].split("/")))
+        argv = argv[:i] + argv[i + 2:]
+    lineup = None
+    if "--arrange" in argv:
+        i = argv.index("--arrange")
+        lineup = argv[i + 1:]
+        argv = argv[:i]
+        if len(lineup) != SLOTS:
+            raise SystemExit(f"--arrange 뒤에 포켓몬 {SLOTS}마리를 적으세요. (받은 개수: {len(lineup)})")
+    args = [a for a in argv if not a.startswith("--")]
     foe = args[0] if args else next(t for t, _ in teams.most_common() if t != us)
     E = entries_of(matches, foe)
     if not E:
         raise SystemExit(f"{foe} 의 기록이 없습니다.")
+
+    if lineup:
+        print()
+        return print_arrange([resolve(x) for x in lineup], E, foe)
 
     print(f"\n{'='*70}\n{foe} 정찰 — 관측 엔트리 {len(E)}개\n{'='*70}")
     for i, e in enumerate(E, 1):
