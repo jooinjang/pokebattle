@@ -108,7 +108,10 @@ def print_solo(E, foe, dup):
     print(f"  기대 마진 {sum((s-3)*md[s] for s in range(7)):+.2f}판")
     print(f"  팀 최종 (동료 포함): 승 {w:.1%}  무 {d:.1%}  패 {l:.1%}")
     print()
-    print("  참고: 균형 추출(pokebattle.py --solo)은 승 = 패 40.9% 입니다.")
+    from pokebattle import NASH as _N, NASH_DEN as _D
+    _q = {c: w / _D for c, w in _N}
+    _w, _, _l = solo_outcome([c for c, _ in _N][:SOLO_SLOTS], _q)
+    print(f"  참고: 균형 추출(pokebattle.py --solo)은 승 = 패 {_w:.1%} 입니다.")
     print("        위 수치가 그보다 나은 만큼이 성향 착취로 얻는 이득입니다.")
     if foe:
         print(f"  주의: 개인 매치 상대는 4명 중 무작위입니다. {foe} 한 팀에만 맞추면")
