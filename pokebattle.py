@@ -13,6 +13,7 @@
     pokebattle.py 6 ? 25 ? ?                   # 도감번호도 가능
     pokebattle.py --rank                       # 151마리를 타입 상성 강도순으로 나열
     pokebattle.py --maxev                      # 상대 151마리 균등 가정의 최대기대값 엔트리
+    pokebattle.py --solo                       # 개인 매치(3마리 등록 · 랜덤 2:2 · 6판)
     pokebattle.py --dup                        # 같은 포켓몬 중복 허용 규칙
     pokebattle.py --seed 7                     # 추출 고정
     pokebattle.py --selftest
@@ -520,6 +521,119 @@ def print_maxev(dup=False):
     return 0
 
 
+SOLO_SLOTS = 3
+
+
+def solo_margin_dist(team, q):
+    """내 3마리가 상대 한 명(각 슬롯 q에서 독립)을 만났을 때 승-패 분포.
+
+    반환 인덱스는 -3..+3 을 0..6 으로 옮긴 것.
+    """
+    d = [0.0] * 7
+    d[3] = 1.0
+    for c in team:
+        w = sum(p for o, p in q.items() if duel(c, o) == 1.0)
+        dr = sum(p for o, p in q.items() if duel(c, o) == 0.5)
+        ls = sum(p for o, p in q.items() if duel(c, o) == 0.0)
+        nd = [0.0] * 7
+        for s, pr in enumerate(d):
+            if not pr:
+                continue
+            nd[min(s + 1, 6)] += pr * w
+            nd[s] += pr * dr
+            nd[max(s - 1, 0)] += pr * ls
+        d = nd
+    return d
+
+
+def solo_outcome(team, q):
+    """개인 매치 최종 결과 확률. 팀 = 내 3판 + 동료 3판, 6판 다승제.
+
+    동료도 상대도 q 를 따른다고 보면 동료의 마진은 q 대 q 라 0 을 중심으로
+    대칭이다. 내 마진 분포와 합성해 팀 승/무/패를 낸다.
+    """
+    mine = solo_margin_dist(team, q)
+    mate = [0.0] * 7
+    mate[3] = 1.0
+    for _ in range(SOLO_SLOTS):                      # 동료 한 판 = q 대 q
+        w = sum(p * pp for c, p in q.items() for o, pp in q.items() if duel(c, o) == 1.0)
+        dr = sum(p * pp for c, p in q.items() for o, pp in q.items() if duel(c, o) == 0.5)
+        ls = sum(p * pp for c, p in q.items() for o, pp in q.items() if duel(c, o) == 0.0)
+        nd = [0.0] * 7
+        for s, pr in enumerate(mate):
+            if not pr:
+                continue
+            nd[min(s + 1, 6)] += pr * w
+            nd[s] += pr * dr
+            nd[max(s - 1, 0)] += pr * ls
+        mate = nd
+    win = draw = loss = 0.0
+    for a, pa in enumerate(mine):
+        for b, pb in enumerate(mate):
+            tot = (a - 3) + (b - 3)
+            if tot > 0:
+                win += pa * pb
+            elif tot < 0:
+                loss += pa * pb
+            else:
+                draw += pa * pb
+    return win, draw, loss
+
+
+def solo_pick(rng, dup, q=None):
+    """개인 매치용 3마리. q 가 없으면 균형에서 뽑는다(착취 불가).
+
+    q 가 주어지면(정찰 결과) 그 분포를 최대로 착취하는 3마리를 고른다.
+    슬롯별 분포가 같다고 보므로 순서는 성능에 영향이 없다 — 등록 순서는
+    상대가 슬롯별 습관을 보일 때만 의미가 있고, 그건 scout.py 쪽 일이다.
+    """
+    if q is None:
+        if dup:
+            combos = [c for c, _ in NASH]
+            weights = [w for _, w in NASH]
+            return [rng.choice(COMBO_MONS[c])
+                    for c in rng.choices(combos, weights=weights, k=SOLO_SLOTS)]
+        caps = [len(COMBO_MONS[c]) for c, _ in NASH]
+        return sample_nash(SOLO_SLOTS, rng)
+    score = {c: sum((1 if duel(c, o) == 1.0 else -1 if duel(c, o) == 0.0 else 0) * p
+                    for o, p in q.items()) for c in COMBOS}
+    order = sorted(COMBOS, key=lambda c: -score[c])
+    team, used = [], set()
+    for c in order:
+        for m in COMBO_MONS[c]:
+            if len(team) == SOLO_SLOTS:
+                break
+            if dup or m[0] not in used:
+                team.append(m)
+                used.add(m[0])
+        if len(team) == SOLO_SLOTS:
+            break
+    return team
+
+
+def print_solo(rng, dup):
+    q = {c: w / NASH_DEN for c, w in NASH}
+    team = solo_pick(rng, dup)
+    print("개인 매치 (3마리 등록 · 랜덤 2:2 · 6판 다승제)")
+    print()
+    print("  내 3마리는 상대 두 명 중 한 명의 3마리와 등록 순서대로 맞붙고,")
+    print("  동료의 3판과 합산해 6판 다승제로 갈립니다. 동료는 못 고르니")
+    print("  내 3판의 마진(승-패)을 최대화하는 것이 전부입니다.")
+    print()
+    for i, m in enumerate(team, 1):
+        print(f"  {i}번  {pad(m[1], 12)}({'/'.join(m[2])})   균형확률 {nash_prob(m[2]):.1%}")
+    md = solo_margin_dist([key(m[2]) for m in team], q)
+    w, d, l = solo_outcome([key(m[2]) for m in team], q)
+    print()
+    print("  내 3판 마진 분포: " + "  ".join(f"{s-3:+d} {md[s]:.0%}" for s in range(7) if md[s] > 0.005))
+    print(f"  내 기대 마진 {sum((s-3)*md[s] for s in range(7)):+.2f}판")
+    print(f"  팀 최종 (동료 포함): 승 {w:.1%}  무 {d:.1%}  패 {l:.1%}")
+    print()
+    print("  등록 순서는 상대가 슬롯별 습관을 보일 때만 의미가 있습니다.")
+    print("  기록이 있으면: scout.py <상대> --arrange <3마리>")
+    return 0
+
+
 def print_nash():
     print("1판 게임의 내쉬 균형. 각 슬롯이 이 확률을 따르므로 어떤 상대 엔트리를 만나도")
     print("판당 기대 승패는 0 이상이다. 5마리는 정원 제약 때문에 독립이 아니라 한 덩어리로 뽑는다.")
@@ -535,6 +649,8 @@ def main(argv):
         return selftest()
     dup = "--dup" in argv
     argv = [a for a in argv if a != "--dup"]
+    solo = "--solo" in argv
+    argv = [a for a in argv if a != "--solo"]
     if "--maxev" in argv:
         return print_maxev(dup)
     if "--rank" in argv:
@@ -545,6 +661,8 @@ def main(argv):
         seed = int(argv[i + 1])
         argv = argv[:i] + argv[i + 2:]
     rng = random.Random(seed)
+    if solo:
+        return print_solo(rng, dup)
 
     tokens = argv or ["?"] * SLOTS
     if len(tokens) != SLOTS:

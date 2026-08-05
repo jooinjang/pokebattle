@@ -9,6 +9,7 @@ pokebattle.py 는 상대를 모를 때의 균형 전략을 다룬다. 이쪽은 
     scout.py 운영1유닛 --hide 강철/전기
                                  # 우리 주력 조합을 지정하면 그걸 노리는
                                  # 저격 픽이 어느 슬롯에서 오는지 집계한다
+    scout.py 개발16유닛 --solo   # 개인 매치(3마리) — 그 성향을 착취하는 3마리
     scout.py 개발16유닛 --arrange 썬더 코일 썬더 고지 갸라도스
                                  # 5마리를 그 상대의 슬롯 습관에 맞춰 배치한다.
                                  # pokebattle.py --dup 이 뽑은 멀티셋을 그대로
@@ -78,6 +79,41 @@ def record(matches, team):
         d += a == b
         l += a < b
     return w, d, l
+
+
+def print_solo(E, foe, dup):
+    """개인 매치(3마리) — 관측 분포를 착취하는 3마리와 기대 성적.
+
+    내 3마리는 상대 한 명의 3마리와 순서대로 붙고, 동료 3판과 합산해
+    6판 다승제. 동료는 못 고르므로 내 마진 기대값을 최대화하면 된다.
+    """
+    from pokebattle import SOLO_SLOTS, solo_margin_dist, solo_outcome, solo_pick
+    picks = [key(BY_NAME[x][2]) for e in E for x in e]
+    q = {c: n / len(picks) for c, n in Counter(picks).items()}
+    team = solo_pick(None, dup, q)
+    tk = [key(m[2]) for m in team]
+    who = f"{foe} 성향" if foe else "전체 상대 풀"
+    print(f"개인 매치 3마리 — {who}({len(picks)}픽) 착취")
+    print()
+    for i, m in enumerate(team, 1):
+        c = key(m[2])
+        w = sum(p for o, p in q.items() if duel(c, o) == 1.0)
+        l = sum(p for o, p in q.items() if duel(c, o) == 0.0)
+        print(f"  {i}번  {pad(m[1], 12)}({pad('/'.join(m[2]), 12)}) "
+              f"승 {w:.0%} 무 {1-w-l:.0%} 패 {l:.0%}   마진 {w-l:+.2f}")
+    md = solo_margin_dist(tk, q)
+    w, d, l = solo_outcome(tk, q)
+    print()
+    print("  내 3판 마진: " + "  ".join(f"{s-3:+d} {md[s]:.0%}" for s in range(7) if md[s] > 0.005))
+    print(f"  기대 마진 {sum((s-3)*md[s] for s in range(7)):+.2f}판")
+    print(f"  팀 최종 (동료 포함): 승 {w:.1%}  무 {d:.1%}  패 {l:.1%}")
+    print()
+    print("  참고: 균형 추출(pokebattle.py --solo)은 승 = 패 40.9% 입니다.")
+    print("        위 수치가 그보다 나은 만큼이 성향 착취로 얻는 이득입니다.")
+    if foe:
+        print(f"  주의: 개인 매치 상대는 4명 중 무작위입니다. {foe} 한 팀에만 맞추면")
+        print(f"        다른 사람이 걸렸을 때 빗나갑니다. 팀명을 빼면 전체 풀 기준입니다.")
+    return 0
 
 
 def slot_dist(E, alpha=0.5):
@@ -168,6 +204,9 @@ def main(argv):
         i = argv.index("--hide")
         hide = tuple(sorted(argv[i + 1].split("/")))
         argv = argv[:i] + argv[i + 2:]
+    solo = "--solo" in argv
+    dup = "--dup" in argv
+    argv = [a for a in argv if a not in ("--solo", "--dup")]
     lineup = None
     if "--arrange" in argv:
         i = argv.index("--arrange")
@@ -181,6 +220,13 @@ def main(argv):
     if not E:
         raise SystemExit(f"{foe} 의 기록이 없습니다.")
 
+    if solo:
+        print()
+        if args:                       # 팀을 명시하면 그 팀만
+            return print_solo(E, foe, dup)
+        pooled = [e for t, _ in teams.most_common() if t != us
+                  for e in entries_of(matches, t)]
+        return print_solo(pooled, None, dup)
     if lineup:
         print()
         return print_arrange([resolve(x) for x in lineup], E, foe)
